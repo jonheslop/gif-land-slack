@@ -1,0 +1,6 @@
+name = "gif-land-slack"
+main = "src/index.ts"
+compatibility_date = "2025-03-19"
+
+# SLACK_SIGNING_SECRET is set as a secret via:
+# wrangler secret put SLACK_SIGNING_SECRET
