@@ -71,7 +71,7 @@ function buildGifBlocks(gifs: Gif[]): object[] {
         {
           type: "button",
           text: { type: "plain_text", text: "Share to channel" },
-          value: gif.url,
+          value: JSON.stringify({ url: gif.url, tags: gif.tags || "" }),
           action_id: "share_gif",
           style: "primary",
         },
@@ -117,7 +117,7 @@ async function handleSlashCommand(
     // No search term - post a random GIF directly to channel
     const gif = allGifs[Math.floor(Math.random() * allGifs.length)];
     const gifUrl = `${SITE_URL}/${gif.url}`;
-    const label = gif.tags || gif.url.replace(/\.gif$/i, "");
+    const label = `${gif.url}${gif.tags ? ` | ${gif.tags}` : ""}`;
     return jsonResponse({
       response_type: "in_channel",
       blocks: [
@@ -188,9 +188,18 @@ async function handleAction(
     return new Response("OK", { status: 200 });
   }
 
-  const gifFilename: string = action.value;
+  let gifFilename: string;
+  let tags: string;
+  try {
+    const parsed = JSON.parse(action.value);
+    gifFilename = parsed.url;
+    tags = parsed.tags || "";
+  } catch {
+    gifFilename = action.value;
+    tags = "";
+  }
   const gifUrl = `${SITE_URL}/${gifFilename}`;
-  const label = gifFilename.replace(/\.gif$/i, "");
+  const label = `${gifFilename}${tags ? ` | ${tags}` : ""}`;
   const responseUrl: string = payload.response_url;
 
   // Replace the ephemeral picker with the GIF posted publicly to the channel
@@ -200,12 +209,13 @@ async function handleAction(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         response_type: "in_channel",
-        replace_original: true,
+        delete_original: true,
         blocks: [
           {
             type: "image",
             image_url: gifUrl,
             alt_text: label,
+            title: { type: "plain_text", text: label },
           },
         ],
       }),
