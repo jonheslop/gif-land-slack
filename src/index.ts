@@ -8,6 +8,17 @@ interface Gif {
 
 interface Env {
   SLACK_SIGNING_SECRET: string;
+  SLACK_CLIENT_ID: string;
+  SLACK_CLIENT_SECRET: string;
+  SLACK_REDIRECT_URI: string;
+  SLACK_KV: KVNamespace;
+}
+
+interface OAuthResponse {
+  ok: boolean;
+  access_token: string;
+  team: { id: string; name: string };
+  error?: string;
 }
 
 const SITE_URL = "https://gif.land";
@@ -79,6 +90,66 @@ function buildGifBlocks(gifs: Gif[]): object[] {
     });
   }
   return blocks;
+}
+
+async function handleInstall(request: Request, env: Env): Promise<Response> {
+  const state = crypto.randomUUID();
+  await env.SLACK_KV.put(`state:${state}`, "1", { expirationTtl: 600 });
+
+  const params = new URLSearchParams({
+    client_id: env.SLACK_CLIENT_ID,
+    scope: "commands",
+    redirect_uri: env.SLACK_REDIRECT_URI,
+    state,
+  });
+
+  return Response.redirect(
+    `https://slack.com/oauth/v2/authorize?${params}`,
+    302,
+  );
+}
+
+async function handleOAuthRedirect(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+
+  if (!code || !state) {
+    return new Response("Missing code or state", { status: 400 });
+  }
+
+  const valid = await env.SLACK_KV.get(`state:${state}`);
+  if (!valid) {
+    return new Response("Invalid or expired state", { status: 403 });
+  }
+  await env.SLACK_KV.delete(`state:${state}`);
+
+  const tokenRes = await fetch("https://slack.com/api/oauth.v2.access", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: env.SLACK_CLIENT_ID,
+      client_secret: env.SLACK_CLIENT_SECRET,
+      redirect_uri: env.SLACK_REDIRECT_URI,
+    }),
+  });
+
+  const data = (await tokenRes.json()) as OAuthResponse;
+
+  if (!data.ok) {
+    return new Response(`OAuth failed: ${data.error}`, { status: 500 });
+  }
+
+  await env.SLACK_KV.put(`token:${data.team.id}`, data.access_token);
+
+  return new Response(
+    "gif.land has been added to your Slack workspace! You can close this tab.",
+    { status: 200, headers: { "Content-Type": "text/plain" } },
+  );
 }
 
 async function handleSlashCommand(
@@ -202,7 +273,7 @@ async function handleAction(
   const label = `${gifFilename}${tags ? ` | ${tags}` : ""}`;
   const responseUrl: string = payload.response_url;
 
-  // Replace the ephemeral picker with the GIF posted publicly to the channel
+  // Delete the ephemeral picker and post the GIF publicly to the channel
   ctx.waitUntil(
     fetch(responseUrl, {
       method: "POST",
@@ -232,11 +303,21 @@ export default {
     env: Env,
     ctx: ExecutionContext,
   ): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (request.method === "GET") {
+      if (url.pathname === "/slack/install") {
+        return handleInstall(request, env);
+      }
+      if (url.pathname === "/slack/oauth_redirect") {
+        return handleOAuthRedirect(request, env);
+      }
+      return new Response("Not found", { status: 404 });
+    }
+
     if (request.method !== "POST") {
       return new Response("Method not allowed", { status: 405 });
     }
-
-    const url = new URL(request.url);
 
     if (url.pathname === "/slack") {
       return handleSlashCommand(request, env);
