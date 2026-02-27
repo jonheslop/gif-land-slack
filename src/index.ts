@@ -226,7 +226,7 @@ async function handleOAuthRedirect(
 
   return new Response(
     "｡◕‿◕｡\ngif.land has been added to your Slack workspace!\nyou can now use /gifland to add gifs\nYou can close this tab.",
-    { status: 200, headers: { "Content-Type": "text/plain" } },
+    { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } },
   );
 }
 
@@ -381,10 +381,10 @@ async function handleViewSubmission(
 
     const matches = query
       ? allGifs.filter(
-          (g) =>
-            g.tags?.toLowerCase().includes(query.toLowerCase()) ||
-            g.url.toLowerCase().includes(query.toLowerCase()),
-        )
+        (g) =>
+          g.tags?.toLowerCase().includes(query.toLowerCase()) ||
+          g.url.toLowerCase().includes(query.toLowerCase()),
+      )
       : shuffled(allGifs).slice(0, MAX_MODAL_OPTIONS);
 
     if (matches.length === 0) {
