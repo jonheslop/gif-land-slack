@@ -23,7 +23,7 @@ interface OAuthResponse {
 
 const SITE_URL = "https://gif.land";
 const MAX_GIFS_SHOWN = 10;
-const MAX_MODAL_OPTIONS = 25;
+const MAX_MODAL_RESULTS = 10;
 
 async function verifySlackSignature(
   signingSecret: string,
@@ -134,39 +134,41 @@ function buildSearchModal(meta: {
   };
 }
 
-// Builds the second modal view: a static select of matching GIFs.
-// Option values are encoded as "url||tags" to avoid a second API fetch on submit.
+// Builds the second modal view: image previews with a "Post" button under each.
 function buildResultsModal(
   meta: { channelId: string; threadTs: string },
   gifs: Gif[],
 ): object {
+  const blocks: object[] = [];
+  for (const gif of gifs) {
+    const gifUrl = `${SITE_URL}/${gif.url}`;
+    const label = gif.tags || gif.url.replace(/\.gif$/i, "");
+    blocks.push({
+      type: "image",
+      image_url: gifUrl,
+      alt_text: label,
+      title: { type: "plain_text", text: gif.url },
+    });
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Post to thread" },
+          value: `${gif.url}||${gif.tags || ""}`.slice(0, 150),
+          action_id: "post_gif_to_thread",
+          style: "primary",
+        },
+      ],
+    });
+  }
   return {
     type: "modal",
     callback_id: "gifland_results",
     private_metadata: JSON.stringify(meta),
     title: { type: "plain_text", text: "gif.land" },
-    submit: { type: "plain_text", text: "Post" },
     close: { type: "plain_text", text: "Back" },
-    blocks: [
-      {
-        type: "input",
-        block_id: "gif_select_block",
-        label: { type: "plain_text", text: "Select a GIF" },
-        element: {
-          type: "static_select",
-          action_id: "gif_select",
-          options: gifs.map((gif) => {
-            const label = (gif.tags || gif.url.replace(/\.gif$/i, "")).slice(
-              0,
-              75,
-            );
-            // Encode url and tags together; slice to Slack's 150-char option value limit
-            const value = `${gif.url}||${gif.tags || ""}`.slice(0, 150);
-            return { text: { type: "plain_text", text: label }, value };
-          }),
-        },
-      },
-    ],
+    blocks,
   };
 }
 
@@ -176,7 +178,7 @@ async function handleInstall(request: Request, env: Env): Promise<Response> {
 
   const params = new URLSearchParams({
     client_id: env.SLACK_CLIENT_ID,
-    scope: "commands,chat:write",
+    scope: "commands,chat:write,chat:write.public",
     redirect_uri: env.SLACK_REDIRECT_URI,
     state,
   });
@@ -348,9 +350,7 @@ async function handleMessageShortcut(
   return new Response("", { status: 200 });
 }
 
-// Handles both modal submissions:
-//   gifland_search  → search gifs and push the results picker view
-//   gifland_results → post the selected gif to the thread
+// Handles the search modal submission: fetch gifs, push the visual results view.
 async function handleViewSubmission(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   payload: Record<string, any>,
@@ -385,7 +385,7 @@ async function handleViewSubmission(
           g.tags?.toLowerCase().includes(query.toLowerCase()) ||
           g.url.toLowerCase().includes(query.toLowerCase()),
       )
-      : shuffled(allGifs).slice(0, MAX_MODAL_OPTIONS);
+      : shuffled(allGifs).slice(0, MAX_MODAL_RESULTS);
 
     if (matches.length === 0) {
       return jsonResponse({
@@ -398,50 +398,8 @@ async function handleViewSubmission(
 
     return jsonResponse({
       response_action: "push",
-      view: buildResultsModal(meta, matches.slice(0, MAX_MODAL_OPTIONS)),
+      view: buildResultsModal(meta, matches.slice(0, MAX_MODAL_RESULTS)),
     });
-  }
-
-  if (callbackId === "gifland_results") {
-    const selectedValue: string =
-      payload.view.state.values?.gif_select_block?.gif_select?.selected_option
-        ?.value ?? "";
-    const [selectedUrl, tags = ""] = selectedValue.split("||", 2);
-
-    const teamId: string = payload.team.id;
-    const token = await env.SLACK_KV.get(`token:${teamId}`);
-    if (!token) {
-      return new Response("App not installed for this workspace", {
-        status: 403,
-      });
-    }
-
-    const gifUrl = `${SITE_URL}/${selectedUrl}`;
-    const label = `${selectedUrl}${tags ? ` | ${tags}` : ""}`;
-
-    ctx.waitUntil(
-      fetch("https://slack.com/api/chat.postMessage", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          channel: meta.channelId,
-          thread_ts: meta.threadTs,
-          blocks: [
-            {
-              type: "image",
-              image_url: gifUrl,
-              alt_text: label,
-              title: { type: "plain_text", text: label },
-            },
-          ],
-        }),
-      }),
-    );
-
-    return jsonResponse({ response_action: "clear" });
   }
 
   return new Response("OK", { status: 200 });
@@ -479,9 +437,89 @@ async function handleAction(
     return handleViewSubmission(payload, env, ctx);
   }
 
-  // block_actions: the "Share to channel" button in the slash command picker
+  // block_actions
   const action = payload.actions?.[0];
-  if (!action || action.action_id !== "share_gif") {
+  if (!action) {
+    return new Response("OK", { status: 200 });
+  }
+
+  // "Post to thread" button clicked inside the results modal
+  if (action.action_id === "post_gif_to_thread" && payload.view) {
+    const meta: { channelId: string; threadTs: string } = JSON.parse(
+      payload.view.private_metadata || "{}",
+    );
+    const [selectedUrl, tags = ""] = (action.value as string).split("||", 2);
+    const teamId: string = payload.team.id;
+    const token = await env.SLACK_KV.get(`token:${teamId}`);
+    if (!token) {
+      return new Response("App not installed for this workspace", {
+        status: 403,
+      });
+    }
+
+    const gifUrl = `${SITE_URL}/${selectedUrl}`;
+    const label = `${selectedUrl}${tags ? ` | ${tags}` : ""}`;
+
+    // Post the gif, then update the modal with success or error
+    ctx.waitUntil(
+      (async () => {
+        const postRes = await fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            channel: meta.channelId,
+            thread_ts: meta.threadTs,
+            blocks: [
+              {
+                type: "image",
+                image_url: gifUrl,
+                alt_text: label,
+                title: { type: "plain_text", text: label },
+              },
+            ],
+          }),
+        });
+        const postData = (await postRes.json()) as {
+          ok: boolean;
+          error?: string;
+        };
+
+        const confirmText = postData.ok
+          ? "GIF posted!"
+          : `Failed to post: ${postData.error}`;
+
+        await fetch("https://slack.com/api/views.update", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            view_id: payload.view.id,
+            view: {
+              type: "modal",
+              title: { type: "plain_text", text: "gif.land" },
+              close: { type: "plain_text", text: "Done" },
+              blocks: [
+                {
+                  type: "section",
+                  text: { type: "mrkdwn", text: confirmText },
+                },
+              ],
+            },
+          }),
+        });
+      })(),
+    );
+
+    return new Response("", { status: 200 });
+  }
+
+  // "Share to channel" button in the slash command ephemeral picker
+  if (action.action_id !== "share_gif") {
     return new Response("OK", { status: 200 });
   }
 
