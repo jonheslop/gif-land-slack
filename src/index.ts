@@ -264,6 +264,8 @@ async function handleSlashCommand(
     });
   }
 
+  const userId = params.get("user_id") ?? "";
+
   if (!text) {
     // No search term - post a random GIF directly to channel
     const gif = allGifs[Math.floor(Math.random() * allGifs.length)];
@@ -277,6 +279,12 @@ async function handleSlashCommand(
           image_url: gifUrl,
           alt_text: label,
           title: { type: "plain_text", text: label },
+        },
+        {
+          type: "context",
+          elements: [
+            { type: "mrkdwn", text: `Requested by <@${userId}>` },
+          ],
         },
       ],
     });
@@ -450,6 +458,7 @@ async function handleAction(
     );
     const [selectedUrl, tags = ""] = (action.value as string).split("||", 2);
     const teamId: string = payload.team.id;
+    const userId: string = payload.user?.id ?? "";
     const token = await env.SLACK_KV.get(`token:${teamId}`);
     if (!token) {
       return new Response("App not installed for this workspace", {
@@ -478,6 +487,12 @@ async function handleAction(
                 image_url: gifUrl,
                 alt_text: label,
                 title: { type: "plain_text", text: label },
+              },
+              {
+                type: "context",
+                elements: [
+                  { type: "mrkdwn", text: `Requested by <@${userId}>` },
+                ],
               },
             ],
           }),
@@ -536,6 +551,7 @@ async function handleAction(
   const gifUrl = `${SITE_URL}/${gifFilename}`;
   const label = `${gifFilename}${tags ? ` | ${tags}` : ""}`;
   const responseUrl: string = payload.response_url;
+  const userId: string = payload.user?.id ?? "";
 
   // Delete the ephemeral picker and post the GIF publicly to the channel
   ctx.waitUntil(
@@ -551,6 +567,12 @@ async function handleAction(
             image_url: gifUrl,
             alt_text: label,
             title: { type: "plain_text", text: label },
+          },
+          {
+            type: "context",
+            elements: [
+              { type: "mrkdwn", text: `Requested by <@${userId}>` },
+            ],
           },
         ],
       }),
