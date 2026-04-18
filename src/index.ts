@@ -227,7 +227,7 @@ async function handleOAuthRedirect(
   await env.SLACK_KV.put(`token:${data.team.id}`, data.access_token);
 
   return new Response(
-    "｡◕‿◕｡\ngif.land has been added to your Slack workspace!\nyou can now use /gifland to add gifs\nYou can close this tab.",
+    "｡◕‿◕｡\ngif.land has been added to your Slack workspace!\nYou can now use /gifland to add gifs\nThanks",
     { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } },
   );
 }
