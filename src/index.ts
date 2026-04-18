@@ -283,7 +283,7 @@ async function handleSlashCommand(
         {
           type: "context",
           elements: [
-            { type: "mrkdwn", text: `Requested by <@${userId}>` },
+            { type: "mrkdwn", text: `Summond by <@${userId}>` },
           ],
         },
       ],
@@ -491,7 +491,7 @@ async function handleAction(
               {
                 type: "context",
                 elements: [
-                  { type: "mrkdwn", text: `Requested by <@${userId}>` },
+                  { type: "mrkdwn", text: `Summond by <@${userId}>` },
                 ],
               },
             ],
@@ -571,7 +571,7 @@ async function handleAction(
           {
             type: "context",
             elements: [
-              { type: "mrkdwn", text: `Requested by <@${userId}>` },
+              { type: "mrkdwn", text: `Summoned by <@${userId}>` },
             ],
           },
         ],
